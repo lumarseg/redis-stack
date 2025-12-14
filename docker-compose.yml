@@ -1,0 +1,77 @@
+# =============================================================================
+# Redis Stack
+# Versión optimizada para Portainer (deployment desde GitHub URL)
+# =============================================================================
+#
+# ARQUITECTURA:
+# - [001] Self-contained: Sin archivos externos, ideal para Portainer
+# - [002] Redes: backend_net (externa compartida)
+# - [003] Persistencia: 1 volumen (Redis)
+#
+# SERVICIOS:
+# - [020] Redis 7: Cache + Queue + Memory con ACL y AOF
+#
+# CARACTERÍSTICAS:
+# - [055] Redis ACL: Usuario personalizado generado dinámicamente
+# - [056] Redis AOF: Persistencia con everysec (máx 1s de pérdida)
+# - [057] Redis Memory: Límite 512MB con política LRU
+# - [070] Docker Healthchecks: Monitoreo de salud de contenedores
+#
+# VARIABLES DE ENTORNO REQUERIDAS:
+# - REDIS_USER, REDIS_PASSWORD
+#
+# =============================================================================
+
+# [003] Volúmenes de persistencia
+volumes:
+  redis_storage:    # Redis: archivos AOF, ACL, snapshots RDB
+
+# [002] Configuración de redes
+networks:
+  backend_net:
+    external: true   # Red externa compartida (debe existir previamente: docker network create backend_net)
+
+services:
+  # ===========================================================================
+  # [020] Redis - Cache + Queue + Memory
+  # ===========================================================================
+  redis:
+    image: redis:7-alpine
+    restart: always
+    container_name: redis
+
+    # [003] Persistencia de datos
+    volumes:
+      - redis_storage:/data
+
+    # [002] Red externa backend_net
+    networks:
+      - backend_net
+
+    # [050] Generación dinámica de ACL + [051] AOF + [052] Límites de memoria
+    command: >
+      sh -c "
+      echo 'user ${REDIS_USER} on >${REDIS_PASSWORD} ~* &* +@all' > /data/users.acl &&
+      redis-server
+      --aclfile /data/users.acl
+      --appendonly yes
+      --appendfsync everysec
+      --auto-aof-rewrite-percentage 100
+      --auto-aof-rewrite-min-size 64mb
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+      --dir /data
+      --appendfilename appendonly.aof
+      "
+
+    # [070] Healthcheck: verifica conexión con autenticación ACL
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli --user ${REDIS_USER} -a ${REDIS_PASSWORD} ping | grep PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+    # [020.1] Configuración de usuario Redis ACL
+    environment:
+      - REDIS_USER=${REDIS_USER}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
